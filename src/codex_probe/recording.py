@@ -1,5 +1,9 @@
 """Data structures for captured LLM requests and responses."""
 
+
+import json
+from pathlib import Path
+from threading import Lock
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -114,3 +118,72 @@ class RecordedCall:
             "response": response,
             "error": self.error
         }
+
+
+class SessionLog:
+    """Collect and persist all calls belonging to one recorder session."""
+
+    def __init__(self, log_dir: Path, session_id: str) -> None:
+        self._log_dir = log_dir
+        self._session_id = session_id,
+        self._path = log_dir / f"{session_id}.jsonl"
+        self._calls: dict[int, RecordedCall] = {}
+        self._lock = Lock()
+        self._closed = False
+
+    @property
+    def path(self) -> Path:
+        """Return the path of this session's JSONL file."""
+        return self._path
+
+    def add(self, call: RecordedCall) -> None:
+        """Add one completed call to this session."""
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Cannot add a call to a closed session.")
+
+            if call.session_id != self._session_id:
+                raise ValueError(
+                    "Call session_id does not match this session.")
+
+            if call.call_index in self._calls:
+                raise ValueError(
+                    f"call_index {call.call_index} is already recorded.")
+
+            self._calls[call.call_index] = call
+
+    def close(self) -> list[dict[str, JsonValue]]:
+        """Write the ordered session log and return it's public records."""
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("Session log is already closed")
+
+            ordered_calls = [
+                self._calls[index]
+                for index in sorted(self._calls)
+            ]
+
+            serialized_calls = [
+                call.to_dict()
+                for call in ordered_calls
+            ]
+
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+
+            with self._path.open(
+                mode="x",
+                encoding="urf-8",
+            ) as log_file:
+                for call in serialized_calls:
+                    line = json.dumps(
+                        call,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    )
+                    log_file.write(line)
+                    log_file.write("\n")
+
+            self._closed = True
+            return serialized_calls
