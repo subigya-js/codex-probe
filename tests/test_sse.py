@@ -1,8 +1,21 @@
-"""Tests for incremental server-sent event parsing."""
+"""Tests for SSE parsing and Responses API reconstruction."""
+
+import json
 
 import pytest
 
-from codex_probe.sse import SseEvent, SseParser
+from codex_probe.sse import (
+    ResponsesReassembler,
+    SseEvent,
+    SseParser,
+)
+
+
+def _as_sse(payload: dict[str, object]) -> bytes:
+    """Encode one dictionary as an SSE data event."""
+
+    data = json.dumps(payload)
+    return f"data: {data}\n\n".encode("utf-8")
 
 
 def test_incomplete_event_waits_for_more_bytes() -> None:
@@ -181,3 +194,154 @@ def test_second_finish_is_rejected() -> None:
         match="SSE parser is already finished",
     ):
         parser.finish()
+
+
+def test_responses_stream_is_reassembled() -> None:
+    parser = SseParser()
+    reassembler = ResponsesReassembler()
+
+    expected_response = {
+        "id": "resp-123",
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "Task completed",
+                    }
+                ],
+            }
+        ],
+    }
+
+    stream = b"".join(
+        [
+            _as_sse(
+                {
+                    "type": "response.created",
+                    "response": {
+                        "id": "resp-123",
+                        "status": "in_progress",
+                    },
+                }
+            ),
+            _as_sse(
+                {
+                    "type": "response.output_text.delta",
+                    "delta": "Task completed",
+                }
+            ),
+            _as_sse(
+                {
+                    "type": "response.completed",
+                    "response": expected_response,
+                }
+            ),
+        ]
+    )
+
+    chunks = [
+        stream[:17],
+        stream[17:63],
+        stream[63:],
+    ]
+
+    for chunk in chunks:
+        for event in parser.feed(chunk):
+            reassembler.accept(event)
+
+    for event in parser.finish():
+        reassembler.accept(event)
+
+    assert reassembler.finish() == expected_response
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        "response.failed",
+        "response.incomplete",
+    ],
+)
+def test_failed_and_incomplete_responses_are_captured(
+    event_type: str,
+) -> None:
+    reassembler = ResponsesReassembler()
+    response = {
+        "id": "resp-123",
+        "status": event_type.removeprefix("response."),
+    }
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {
+                    "type": event_type,
+                    "response": response,
+                }
+            )
+        )
+    )
+
+    assert reassembler.finish() == response
+
+
+def test_done_marker_is_ignored() -> None:
+    reassembler = ResponsesReassembler()
+
+    reassembler.accept(SseEvent(data="[DONE]"))
+
+    with pytest.raises(
+        ValueError,
+        match="stream ended without a terminal response",
+    ):
+        reassembler.finish()
+
+
+def test_terminal_event_requires_response_object() -> None:
+    reassembler = ResponsesReassembler()
+
+    with pytest.raises(
+        ValueError,
+        match="terminal event must contain a response object",
+    ):
+        reassembler.accept(
+            SseEvent(
+                data=json.dumps(
+                    {"type": "response.completed"}
+                )
+            )
+        )
+
+
+def test_responses_event_must_be_json_object() -> None:
+    reassembler = ResponsesReassembler()
+
+    with pytest.raises(
+        ValueError,
+        match="must be a JSON object",
+    ):
+        reassembler.accept(
+            SseEvent(data='["not", "an", "object"]')
+        )
+
+
+def test_missing_terminal_response_is_rejected() -> None:
+    reassembler = ResponsesReassembler()
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {"type": "response.output_text.delta"}
+            )
+        )
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="stream ended without a terminal response",
+    ):
+        reassembler.finish()

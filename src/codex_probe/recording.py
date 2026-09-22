@@ -27,12 +27,12 @@ class RecordedRequest:
     body: JsonValue
 
     def to_dict(self) -> dict[str, JsonValue]:
-        """Convert the request into a JSON serializable dictionary"""
+        """Convert the request into a JSON-serializable dictionary."""
 
         return {
             "method": self.method,
             "path": self.path,
-            "body": self.body
+            "body": self.body,
         }
 
 
@@ -45,36 +45,36 @@ class RecordedResponse:
     body: JsonValue
 
     def to_dict(self) -> dict[str, JsonValue]:
-        """Convert the response into a JSON serializable dictionary"""
+        """Convert the response into a JSON-serializable dictionary."""
 
         return {
             "status": self.status,
             "streamed": self.streamed,
-            "body": self.body
+            "body": self.body,
         }
 
 
 @dataclass(frozen=True, slots=True)
 class RecordedBackend:
-    """Non sensitive identity of the backend that handled a call."""
+    """Non-sensitive identity of the backend that handled a call."""
 
     name: str
     base_url: str
     wire_api: WireApi
 
     def to_dict(self) -> dict[str, JsonValue]:
-        """Convert the backend identity into a dictionary"""
+        """Convert the backend identity into a dictionary."""
 
         return {
             "name": self.name,
             "base_url": self.base_url,
-            "wire_api": self.wire_api
+            "wire_api": self.wire_api,
         }
 
 
 @dataclass(frozen=True, slots=True)
 class RecordedCall:
-    """One complete LLM call captured by Codex-probe"""
+    """One complete LLM call captured by CodexProbe."""
 
     session_id: str
     call_index: int
@@ -96,10 +96,11 @@ class RecordedCall:
 
         if (self.response is None) == (self.error is None):
             raise ValueError(
-                "exactly one of response or error must be provided")
+                "exactly one of response or error must be provided"
+            )
 
     def to_dict(self) -> dict[str, JsonValue]:
-        "Convert the complete call into it's public log representation."
+        """Convert the call into its public log representation."""
 
         response = (
             self.response.to_dict()
@@ -116,7 +117,7 @@ class RecordedCall:
             "backend": self.backend.to_dict(),
             "request": self.request.to_dict(),
             "response": response,
-            "error": self.error
+            "error": self.error,
         }
 
 
@@ -134,6 +135,7 @@ class SessionLog:
     @property
     def path(self) -> Path:
         """Return the path of this session's JSONL file."""
+
         return self._path
 
     def add(self, call: RecordedCall) -> None:
@@ -141,24 +143,26 @@ class SessionLog:
 
         with self._lock:
             if self._closed:
-                raise RuntimeError("Cannot add a call to a closed session.")
+                raise RuntimeError("cannot add a call to a closed session")
 
             if call.session_id != self._session_id:
                 raise ValueError(
-                    "Call session_id does not match this session.")
+                    "call session_id does not match this session"
+                )
 
             if call.call_index in self._calls:
                 raise ValueError(
-                    f"call_index {call.call_index} is already recorded.")
+                    f"call_index {call.call_index} is already recorded"
+                )
 
             self._calls[call.call_index] = call
 
     def close(self) -> list[dict[str, JsonValue]]:
-        """Write the ordered session log and return it's public records."""
+        """Write the ordered session log and return its public records."""
 
         with self._lock:
             if self._closed:
-                raise RuntimeError("Session log is already closed")
+                raise RuntimeError("session log is already closed")
 
             ordered_calls = [
                 self._calls[index]

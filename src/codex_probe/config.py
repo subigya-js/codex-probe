@@ -67,8 +67,9 @@ def parse_config(config: Mapping[str, object]) -> ProxyConfig:
 
     backend = _parse_backend(config_mapping["backend"])
     listen = _parse_listen(config_mapping.get("listen", {}))
-    log_dir = _parse_log_dir(config_mapping.get(
-        "log_dir", ".codex-probe/logs"))
+    log_dir = _parse_log_dir(
+        config_mapping.get("log_dir", ".codex-probe/logs")
+    )
     seed = _parse_seed(config_mapping.get("seed"))
 
     return ProxyConfig(
