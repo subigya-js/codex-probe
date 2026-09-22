@@ -1,13 +1,13 @@
 """Data structures for captured LLM requests and responses."""
 
-
-import json
-from pathlib import Path
-from threading import Lock
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
+from threading import Lock
 from typing import TypeAlias
+
 from .config import WireApi
 
 
@@ -125,7 +125,7 @@ class SessionLog:
 
     def __init__(self, log_dir: Path, session_id: str) -> None:
         self._log_dir = log_dir
-        self._session_id = session_id,
+        self._session_id = session_id
         self._path = log_dir / f"{session_id}.jsonl"
         self._calls: dict[int, RecordedCall] = {}
         self._lock = Lock()
@@ -174,7 +174,7 @@ class SessionLog:
 
             with self._path.open(
                 mode="x",
-                encoding="urf-8",
+                encoding="utf-8",
             ) as log_file:
                 for call in serialized_calls:
                     line = json.dumps(
