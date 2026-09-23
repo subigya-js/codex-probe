@@ -5,6 +5,7 @@ import json
 import pytest
 
 from codex_probe.sse import (
+    ChatCompletionsReassembler,
     ResponsesReassembler,
     SseEvent,
     SseParser,
@@ -343,5 +344,430 @@ def test_missing_terminal_response_is_rejected() -> None:
     with pytest.raises(
         ValueError,
         match="stream ended without a terminal response",
+    ):
+        reassembler.finish()
+
+def test_chat_text_stream_is_reassembled() -> None:
+    reassembler = ChatCompletionsReassembler()
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {
+                    "id": "chatcmpl-123",
+                    "object": "chat.completion.chunk",
+                    "created": 1234567890,
+                    "model": "qwen2.5-coder",
+                    "system_fingerprint": "fingerprint-123",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        )
+    )
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {
+                    "id": "chatcmpl-123",
+                    "created": 1234567890,
+                    "model": "qwen2.5-coder",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "content": "Hello",
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        )
+    )
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {
+                    "id": "chatcmpl-123",
+                    "created": 1234567890,
+                    "model": "qwen2.5-coder",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "content": " world",
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        )
+    )
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {
+                    "id": "chatcmpl-123",
+                    "created": 1234567890,
+                    "model": "qwen2.5-coder",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
+        )
+    )
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {
+                    "id": "chatcmpl-123",
+                    "created": 1234567890,
+                    "model": "qwen2.5-coder",
+                    "choices": [],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 2,
+                        "total_tokens": 12,
+                    },
+                }
+            )
+        )
+    )
+
+    reassembler.accept(SseEvent(data="[DONE]"))
+
+    assert reassembler.finish() == {
+        "id": "chatcmpl-123",
+        "object": "chat.completion",
+        "created": 1234567890,
+        "model": "qwen2.5-coder",
+        "system_fingerprint": "fingerprint-123",
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 2,
+            "total_tokens": 12,
+        },
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello world",
+                },
+                "finish_reason": "stop",
+                "logprobs": None,
+            }
+        ],
+    }
+
+
+def test_chat_tool_call_fragments_are_reassembled() -> None:
+    reassembler = ChatCompletionsReassembler()
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {
+                    "id": "chatcmpl-tool",
+                    "created": 1234567890,
+                    "model": "qwen2.5-coder",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "call-123",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "read_file",
+                                            "arguments": '{"path":',
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        )
+    )
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {
+                    "id": "chatcmpl-tool",
+                    "created": 1234567890,
+                    "model": "qwen2.5-coder",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "function": {
+                                            "arguments": '"config.py"}',
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+            )
+        )
+    )
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {
+                    "id": "chatcmpl-tool",
+                    "created": 1234567890,
+                    "model": "qwen2.5-coder",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                }
+            )
+        )
+    )
+
+    assert reassembler.finish() == {
+        "id": "chatcmpl-tool",
+        "object": "chat.completion",
+        "created": 1234567890,
+        "model": "qwen2.5-coder",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-123",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": '{"path":"config.py"}',
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+                "logprobs": None,
+            }
+        ],
+    }
+
+
+def test_chat_choices_are_ordered_by_index() -> None:
+    reassembler = ChatCompletionsReassembler()
+
+    reassembler.accept(
+        SseEvent(
+            data=json.dumps(
+                {
+                    "id": "chatcmpl-multiple",
+                    "created": 1234567890,
+                    "model": "test-model",
+                    "choices": [
+                        {
+                            "index": 1,
+                            "delta": {
+                                "role": "assistant",
+                                "content": "Second",
+                            },
+                            "finish_reason": "stop",
+                        },
+                        {
+                            "index": 0,
+                            "delta": {
+                                "role": "assistant",
+                                "content": "First",
+                            },
+                            "finish_reason": "stop",
+                        },
+                    ],
+                }
+            )
+        )
+    )
+
+    response = reassembler.finish()
+    choices = response["choices"]
+
+    assert isinstance(choices, list)
+    assert choices[0]["index"] == 0
+    assert choices[1]["index"] == 1
+
+
+@pytest.mark.parametrize(
+    "choices",
+    [
+        "not-a-list",
+        {"index": 0},
+        42,
+    ],
+)
+def test_chat_choices_must_be_a_list(
+    choices: object,
+) -> None:
+    reassembler = ChatCompletionsReassembler()
+
+    with pytest.raises(
+        ValueError,
+        match="Chat stream choices must be a list",
+    ):
+        reassembler.accept(
+            SseEvent(
+                data=json.dumps(
+                    {
+                        "choices": choices,
+                    }
+                )
+            )
+        )
+
+
+def test_chat_choice_must_be_an_object() -> None:
+    reassembler = ChatCompletionsReassembler()
+
+    with pytest.raises(
+        ValueError,
+        match="Chat stream choice must be an object",
+    ):
+        reassembler.accept(
+            SseEvent(
+                data=json.dumps(
+                    {
+                        "choices": [
+                            "not-an-object",
+                        ],
+                    }
+                )
+            )
+        )
+
+
+def test_chat_choice_requires_integer_index() -> None:
+    reassembler = ChatCompletionsReassembler()
+
+    with pytest.raises(
+        ValueError,
+        match="must have an integer index",
+    ):
+        reassembler.accept(
+            SseEvent(
+                data=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "index": "zero",
+                                "delta": {
+                                    "content": "Hello",
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+        )
+
+
+def test_chat_tool_calls_must_be_a_list() -> None:
+    reassembler = ChatCompletionsReassembler()
+
+    with pytest.raises(
+        ValueError,
+        match="Chat stream tool_calls must be a list",
+    ):
+        reassembler.accept(
+            SseEvent(
+                data=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "tool_calls": "not-a-list",
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+        )
+
+
+def test_chat_tool_call_requires_integer_index() -> None:
+    reassembler = ChatCompletionsReassembler()
+
+    with pytest.raises(
+        ValueError,
+        match="Chat tool call must have an integer index",
+    ):
+        reassembler.accept(
+            SseEvent(
+                data=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": "zero",
+                                            "function": {
+                                                "name": "read_file",
+                                            },
+                                        }
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
+        )
+
+
+def test_chat_stream_without_choices_is_rejected() -> None:
+    reassembler = ChatCompletionsReassembler()
+
+    reassembler.accept(SseEvent(data="[DONE]"))
+
+    with pytest.raises(
+        ValueError,
+        match="Chat stream ended without any choices",
     ):
         reassembler.finish()
