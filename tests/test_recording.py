@@ -1,5 +1,6 @@
 """Tests for the CodexProbe recording schema and session logs."""
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 
@@ -330,3 +331,116 @@ def test_session_log_rejects_second_close(
         match="already closed",
     ):
         session_log.close()
+
+
+def test_session_log_reserves_indexes_in_order(
+    tmp_path: Path,
+) -> None:
+    session_log = SessionLog(
+        log_dir=tmp_path,
+        session_id="session-123",
+    )
+
+    first_index = session_log.reserve_call_index()
+    second_index = session_log.reserve_call_index()
+    third_index = session_log.reserve_call_index()
+
+    assert first_index == 1
+    assert second_index == 2
+    assert third_index == 3
+
+
+def test_added_call_advances_next_index(
+    tmp_path: Path,
+) -> None:
+    session_log = SessionLog(
+        log_dir=tmp_path,
+        session_id="session-123",
+    )
+
+    session_log.add(
+        _make_successful_call(call_index=5)
+    )
+
+    assert session_log.reserve_call_index() == 6
+
+
+def test_late_call_does_not_move_index_backward(
+    tmp_path: Path,
+) -> None:
+    session_log = SessionLog(
+        log_dir=tmp_path,
+        session_id="session-123",
+    )
+
+    first_index = session_log.reserve_call_index()
+    second_index = session_log.reserve_call_index()
+
+    session_log.add(
+        _make_successful_call(
+            call_index=second_index,
+        )
+    )
+
+    session_log.add(
+        _make_successful_call(
+            call_index=first_index,
+        )
+    )
+
+    assert session_log.reserve_call_index() == 3
+
+
+def test_call_index_reservation_is_thread_safe(
+    tmp_path: Path,
+) -> None:
+    session_log = SessionLog(
+        log_dir=tmp_path,
+        session_id="session-123",
+    )
+
+    def reserve_one_index(_: int) -> int:
+        return session_log.reserve_call_index()
+
+    with ThreadPoolExecutor(
+        max_workers=8,
+    ) as executor:
+        indexes = list(
+            executor.map(
+                reserve_one_index,
+                range(100),
+            )
+        )
+
+    assert len(set(indexes)) == 100
+    assert sorted(indexes) == list(
+        range(1, 101)
+    )
+
+
+def test_session_log_rejects_reservation_after_close(
+    tmp_path: Path,
+) -> None:
+    session_log = SessionLog(
+        log_dir=tmp_path,
+        session_id="session-123",
+    )
+
+    session_log.close()
+
+    with pytest.raises(
+        RuntimeError,
+        match="cannot reserve an index from a closed session",
+    ):
+        session_log.reserve_call_index()
+
+
+def test_session_log_exposes_session_id(
+    tmp_path: Path,
+) -> None:
+    session_log = SessionLog(
+        log_dir=tmp_path,
+        session_id="session-123",
+    )
+
+    assert session_log.session_id == "session-123"

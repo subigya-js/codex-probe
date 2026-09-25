@@ -1,3 +1,8 @@
 """Public package interface for CodexProbe."""
 
-__all__: list[str] = []
+from .recorder import ProxyRecorder
+
+
+__all__ = [
+    "ProxyRecorder",
+]

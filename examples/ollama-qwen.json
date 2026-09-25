@@ -1,0 +1,16 @@
+{
+  "backend": {
+    "name": "ollama-qwen2.5-coder",
+    "base_url": "http://127.0.0.1:11434/v1",
+    "wire_api": "responses",
+    "auth": {
+      "mode": "none"
+    }
+  },
+  "listen": {
+    "host": "127.0.0.1",
+    "port": 0
+  },
+  "log_dir": ".codex-probe/logs",
+  "seed": 42
+}

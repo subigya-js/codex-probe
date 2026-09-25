@@ -12,7 +12,13 @@ from .config import WireApi
 
 
 JsonValue: TypeAlias = (
-    str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+    str
+    | int
+    | float
+    | bool
+    | None
+    | list["JsonValue"]
+    | dict[str, "JsonValue"]
 )
 
 SCHEMA_VERSION = 1
@@ -89,10 +95,14 @@ class RecordedCall:
         """Reject internally inconsistent call records."""
 
         if self.call_index < 1:
-            raise ValueError("call_index must be at least 1")
+            raise ValueError(
+                "call_index must be at least 1"
+            )
 
         if self.latency_ms < 0:
-            raise ValueError("latency_ms must not be negative")
+            raise ValueError(
+                "latency_ms must not be negative"
+            )
 
         if (self.response is None) == (self.error is None):
             raise ValueError(
@@ -124,11 +134,16 @@ class RecordedCall:
 class SessionLog:
     """Collect and persist all calls belonging to one recorder session."""
 
-    def __init__(self, log_dir: Path, session_id: str) -> None:
+    def __init__(
+        self,
+        log_dir: Path,
+        session_id: str,
+    ) -> None:
         self._log_dir = log_dir
         self._session_id = session_id
         self._path = log_dir / f"{session_id}.jsonl"
         self._calls: dict[int, RecordedCall] = {}
+        self._next_call_index = 1
         self._lock = Lock()
         self._closed = False
 
@@ -138,12 +153,34 @@ class SessionLog:
 
         return self._path
 
+    @property
+    def session_id(self) -> str:
+        """Return the identity of this recording session."""
+
+        return self._session_id
+
+    def reserve_call_index(self) -> int:
+        """Reserve and return the next call index."""
+
+        with self._lock:
+            if self._closed:
+                raise RuntimeError(
+                    "cannot reserve an index from a closed session"
+                )
+
+            call_index = self._next_call_index
+            self._next_call_index += 1
+
+            return call_index
+
     def add(self, call: RecordedCall) -> None:
         """Add one completed call to this session."""
 
         with self._lock:
             if self._closed:
-                raise RuntimeError("cannot add a call to a closed session")
+                raise RuntimeError(
+                    "cannot add a call to a closed session"
+                )
 
             if call.session_id != self._session_id:
                 raise ValueError(
@@ -152,17 +189,25 @@ class SessionLog:
 
             if call.call_index in self._calls:
                 raise ValueError(
-                    f"call_index {call.call_index} is already recorded"
+                    f"call_index {call.call_index} "
+                    "is already recorded"
                 )
 
             self._calls[call.call_index] = call
+
+            if call.call_index >= self._next_call_index:
+                self._next_call_index = (
+                    call.call_index + 1
+                )
 
     def close(self) -> list[dict[str, JsonValue]]:
         """Write the ordered session log and return its public records."""
 
         with self._lock:
             if self._closed:
-                raise RuntimeError("session log is already closed")
+                raise RuntimeError(
+                    "session log is already closed"
+                )
 
             ordered_calls = [
                 self._calls[index]
@@ -174,7 +219,10 @@ class SessionLog:
                 for call in ordered_calls
             ]
 
-            self._log_dir.mkdir(parents=True, exist_ok=True)
+            self._log_dir.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
 
             with self._path.open(
                 mode="x",
@@ -186,8 +234,10 @@ class SessionLog:
                         ensure_ascii=False,
                         separators=(",", ":"),
                     )
+
                     log_file.write(line)
                     log_file.write("\n")
 
             self._closed = True
+
             return serialized_calls
