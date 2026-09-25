@@ -14,7 +14,6 @@ def _make_config(
     auth: object | None = None,
     listen_host: object = "127.0.0.1",
     listen_port: object = 0,
-    seed: object = 42,
 ) -> dict[str, object]:
     """Create a fresh configuration dictionary for each test."""
 
@@ -33,7 +32,6 @@ def _make_config(
             "port": listen_port,
         },
         "log_dir": ".codex-probe/logs",
-        "seed": seed,
     }
 
 
@@ -48,7 +46,6 @@ def test_parse_valid_config() -> None:
     assert config.listen.host == "127.0.0.1"
     assert config.listen.port == 0
     assert config.log_dir == Path(".codex-probe/logs")
-    assert config.seed == 42
 
 
 def test_defaults_are_applied() -> None:
@@ -68,7 +65,6 @@ def test_defaults_are_applied() -> None:
     assert config.listen.host == "127.0.0.1"
     assert config.listen.port == 0
     assert config.log_dir == Path(".codex-probe/logs")
-    assert config.seed is None
 
 
 def test_environment_auth_is_parsed() -> None:
@@ -218,24 +214,5 @@ def test_invalid_listen_port_is_rejected(
     with pytest.raises(
         ConfigError,
         match=expected_message,
-    ):
-        parse_config(raw_config)
-
-
-@pytest.mark.parametrize(
-    "seed",
-    [
-        True,
-        "42",
-    ],
-)
-def test_invalid_seed_is_rejected(seed: object) -> None:
-    raw_config = _make_config(
-        seed=seed,
-    )
-
-    with pytest.raises(
-        ConfigError,
-        match="seed must be an integer or null",
     ):
         parse_config(raw_config)

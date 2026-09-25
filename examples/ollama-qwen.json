@@ -11,6 +11,5 @@
     "host": "127.0.0.1",
     "port": 0
   },
-  "log_dir": ".codex-probe/logs",
-  "seed": 42
+  "log_dir": ".codex-probe/logs"
 }

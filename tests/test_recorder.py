@@ -124,7 +124,6 @@ def _make_config(
             "port": 0,
         },
         "log_dir": str(log_dir),
-        "seed": 42,
     }
 
 

@@ -51,7 +51,6 @@ class ProxyConfig:
     backend: BackendConfig
     listen: ListenConfig
     log_dir: Path
-    seed: int | None
 
 
 def parse_config(config: Mapping[str, object]) -> ProxyConfig:
@@ -60,7 +59,7 @@ def parse_config(config: Mapping[str, object]) -> ProxyConfig:
     config_mapping = _require_mapping(config, "config")
     _validate_keys(
         config_mapping,
-        allowed={"backend", "listen", "log_dir", "seed"},
+        allowed={"backend", "listen", "log_dir"},
         required={"backend"},
         field="config",
     )
@@ -70,13 +69,11 @@ def parse_config(config: Mapping[str, object]) -> ProxyConfig:
     log_dir = _parse_log_dir(
         config_mapping.get("log_dir", ".codex-probe/logs")
     )
-    seed = _parse_seed(config_mapping.get("seed"))
 
     return ProxyConfig(
         backend=backend,
         listen=listen,
         log_dir=log_dir,
-        seed=seed,
     )
 
 
@@ -221,16 +218,6 @@ def _parse_wire_api(value: object) -> WireApi:
 def _parse_log_dir(value: object) -> Path:
     raw_path = _require_non_empty_string(value, "log_dir")
     return Path(raw_path).expanduser()
-
-
-def _parse_seed(value: object) -> int | None:
-    if value is None:
-        return None
-
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ConfigError("seed must be an integer or null")
-
-    return value
 
 
 def _require_mapping(
