@@ -1,6 +1,7 @@
 """Tests for the public ProxyRecorder lifecycle."""
 
 import json
+import socket
 from collections.abc import Iterator
 from http.client import HTTPConnection
 from http.server import (
@@ -107,6 +108,7 @@ def _make_config(
     *,
     backend_url: str,
     log_dir: Path,
+    listen_port: int = 0,
 ) -> dict[str, object]:
     """Create a valid recorder configuration."""
 
@@ -121,7 +123,7 @@ def _make_config(
         },
         "listen": {
             "host": "127.0.0.1",
-            "port": 0,
+            "port": listen_port,
         },
         "log_dir": str(log_dir),
     }
@@ -293,3 +295,35 @@ def test_second_stop_is_rejected(
         match="already stopped",
     ):
         recorder.stop()
+
+
+def test_start_fails_when_port_is_already_in_use(
+    tmp_path: Path,
+) -> None:
+    occupied_socket = socket.socket(
+        socket.AF_INET,
+        socket.SOCK_STREAM,
+    )
+
+    occupied_socket.bind(("127.0.0.1", 0))
+    occupied_socket.listen(1)
+
+    occupied_port = occupied_socket.getsockname()[1]
+
+    recorder = ProxyRecorder(
+        _make_config(
+            backend_url="http://127.0.0.1:1",
+            log_dir=tmp_path,
+            listen_port=occupied_port,
+        )
+    )
+
+    try:
+        with pytest.raises(
+            RuntimeError,
+            match="could not start ProxyRecorder",
+        ):
+            recorder.start()
+
+    finally:
+        occupied_socket.close()
