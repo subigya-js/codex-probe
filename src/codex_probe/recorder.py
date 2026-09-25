@@ -7,6 +7,7 @@ import logging
 import socket
 from collections.abc import Mapping
 from threading import Event, Lock, Thread
+from uuid import uuid4
 
 from aiohttp import web
 
@@ -39,7 +40,7 @@ class ProxyRecorder:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._runner: web.AppRunner | None = None
         self._endpoint: str | None = None
-        self._startup_error: BaseException | None = None
+        self._startup_error: Exception | None = None
 
         self._started = False
         self._stopped = False
@@ -70,6 +71,14 @@ class ProxyRecorder:
         self._ready.wait()
 
         if self._startup_error is not None:
+            thread = self._thread
+
+            if thread is not None:
+                thread.join()
+
+            with self._state_lock:
+                self._stopped = True
+
             raise RuntimeError(
                 "could not start ProxyRecorder"
             ) from self._startup_error
@@ -110,12 +119,12 @@ class ProxyRecorder:
             loop,
         )
 
-        cleanup_error: BaseException | None = None
+        cleanup_error: Exception | None = None
 
         try:
             cleanup_future.result()
 
-        except BaseException as error:
+        except Exception as error:
             cleanup_error = error
 
         finally:
@@ -145,7 +154,7 @@ class ProxyRecorder:
             self._ready.set()
             loop.run_forever()
 
-        except BaseException as error:
+        except Exception as error:
             if not self._ready.is_set():
                 self._startup_error = error
             else:
@@ -165,7 +174,7 @@ class ProxyRecorder:
                         self._cleanup_server()
                     )
 
-                except BaseException:
+                except Exception:
                     LOGGER.exception(
                         "ProxyRecorder cleanup failed"
                     )
@@ -212,7 +221,7 @@ class ProxyRecorder:
 
             await site.start()
 
-        except BaseException:
+        except Exception:
             server_socket.close()
             raise
 
@@ -286,7 +295,5 @@ def _format_endpoint_host(host: str) -> str:
 
 def _create_session_id() -> str:
     """Create a unique identifier for one proxy session."""
-
-    from uuid import uuid4
 
     return uuid4().hex
