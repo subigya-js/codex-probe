@@ -27,7 +27,8 @@ def main() -> None:
     except (KeyboardInterrupt, EOFError):
         pass
 
-    calls = recorder.stop()
+    finally:
+        calls = recorder.stop()
 
     print(
         f"CodexProbe stopped after recording "
