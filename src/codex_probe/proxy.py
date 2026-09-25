@@ -89,7 +89,7 @@ async def _client_session_context(
 
     session = ClientSession(
         timeout=timeout,
-        auto_decompress=False,
+        auto_decompress=True,
     )
 
     app[_CLIENT_KEY] = session
@@ -108,7 +108,16 @@ async def _forward_request(
     session = request.app[_CLIENT_KEY]
     session_log = request.app[_SESSION_LOG_KEY]
 
-    call_index = session_log.reserve_call_index()
+    should_record = _is_llm_request(
+        request.path,
+        config.backend.wire_api,
+    )
+
+    call_index = (
+        session_log.reserve_call_index()
+        if should_record
+        else None
+    )
 
     started_at = datetime.now(
         timezone.utc
@@ -138,6 +147,9 @@ async def _forward_request(
     ) -> None:
         """Record a successful backend response."""
 
+        if call_index is None:
+            return
+
         latency_ms = (
             perf_counter() - timer_started
         ) * 1000
@@ -161,6 +173,9 @@ async def _forward_request(
 
     def record_error(error_message: str) -> None:
         """Record a call that did not produce a response."""
+
+        if call_index is None:
+            return
 
         latency_ms = (
             perf_counter() - timer_started
@@ -223,7 +238,10 @@ async def _forward_request(
 
             response_headers = _copy_headers(
                 backend_response.headers,
-                extra_blocked={"content-length"},
+                extra_blocked={
+                    "content-encoding",
+                    "content-length",
+                },
             )
 
             record_success(
@@ -281,7 +299,10 @@ async def _forward_sse_response(
 
     response_headers = _copy_headers(
         backend_response.headers,
-        extra_blocked={"content-length"},
+        extra_blocked={
+            "content-encoding",
+            "content-length",
+        },
     )
 
     client_response = web.StreamResponse(
@@ -399,6 +420,20 @@ def _create_reassembler(
         return ResponsesReassembler()
 
     return ChatCompletionsReassembler()
+
+
+def _is_llm_request(
+    path: str,
+    wire_api: WireApi,
+) -> bool:
+    """Return whether a request is an LLM inference call."""
+
+    normalized_path = path.rstrip("/")
+
+    if wire_api == "responses":
+        return normalized_path.endswith("/responses")
+
+    return normalized_path.endswith("/chat/completions")
 
 
 def _is_sse_response(

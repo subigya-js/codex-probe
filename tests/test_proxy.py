@@ -1,6 +1,7 @@
 """Tests for HTTP proxy passthrough and recording."""
 
 import asyncio
+import gzip
 import json
 from pathlib import Path
 
@@ -1392,3 +1393,194 @@ async def _test_incomplete_stream_is_forwarded_and_recorded_as_error(
     assert calls[0]["error"] == (
         "stream reconstruction failed: ValueError"
     )
+
+
+def test_non_llm_request_is_forwarded_but_not_recorded(
+    tmp_path: Path,
+) -> None:
+    asyncio.run(
+        _test_non_llm_request_is_forwarded_but_not_recorded(
+            tmp_path
+        )
+    )
+
+
+async def _test_non_llm_request_is_forwarded_but_not_recorded(
+    tmp_path: Path,
+) -> None:
+    received_request: dict[str, object] = {}
+
+    async def backend_handler(
+        request: web.Request,
+    ) -> web.Response:
+        received_request["method"] = request.method
+        received_request["path"] = request.path
+        received_request["query"] = request.query_string
+
+        return web.json_response(
+            {
+                "object": "list",
+                "data": [],
+            }
+        )
+
+    backend_app = web.Application()
+
+    backend_app.router.add_get(
+        "/models",
+        backend_handler,
+    )
+
+    backend_server = TestServer(backend_app)
+    await backend_server.start_server()
+
+    config = parse_config(
+        {
+            "backend": {
+                "name": "mock",
+                "base_url": str(
+                    backend_server.make_url("")
+                ).rstrip("/"),
+                "wire_api": "responses",
+                "auth": {
+                    "mode": "none",
+                },
+            }
+        }
+    )
+
+    session_log = _make_session_log(tmp_path)
+
+    proxy_app = create_proxy_app(
+        config,
+        session_log,
+    )
+
+    proxy_server = TestServer(proxy_app)
+    await proxy_server.start_server()
+
+    try:
+        async with ClientSession() as client:
+            async with client.get(
+                proxy_server.make_url(
+                    "/models?client_version=0.153.0"
+                )
+            ) as response:
+                response_body = await response.json()
+
+                assert response.status == 200
+                assert response_body == {
+                    "object": "list",
+                    "data": [],
+                }
+
+        assert received_request == {
+            "method": "GET",
+            "path": "/models",
+            "query": "client_version=0.153.0",
+        }
+
+    finally:
+        await proxy_server.close()
+        await backend_server.close()
+
+    calls = session_log.close()
+
+    assert calls == []
+
+
+def test_compressed_json_response_is_decoded_and_recorded(
+    tmp_path: Path,
+) -> None:
+    asyncio.run(
+        _test_compressed_json_response_is_decoded_and_recorded(
+            tmp_path
+        )
+    )
+
+
+async def _test_compressed_json_response_is_decoded_and_recorded(
+    tmp_path: Path,
+) -> None:
+    response_data = {
+        "status": "completed",
+        "output": "OPENAI_PROXY_OK",
+    }
+
+    compressed_body = gzip.compress(
+        json.dumps(response_data).encode("utf-8")
+    )
+
+    async def backend_handler(
+        request: web.Request,
+    ) -> web.Response:
+        await request.read()
+
+        return web.Response(
+            body=compressed_body,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Encoding": "gzip",
+            },
+        )
+
+    backend_app = web.Application()
+    backend_app.router.add_post(
+        "/responses",
+        backend_handler,
+    )
+
+    backend_server = TestServer(backend_app)
+    await backend_server.start_server()
+
+    config = parse_config(
+        {
+            "backend": {
+                "name": "compressed-backend",
+                "base_url": str(
+                    backend_server.make_url("")
+                ).rstrip("/"),
+                "wire_api": "responses",
+                "auth": {
+                    "mode": "none",
+                },
+            }
+        }
+    )
+
+    session_log = _make_session_log(tmp_path)
+    proxy_app = create_proxy_app(
+        config,
+        session_log,
+    )
+
+    proxy_server = TestServer(proxy_app)
+    await proxy_server.start_server()
+
+    try:
+        async with ClientSession() as client:
+            async with client.post(
+                proxy_server.make_url("/responses"),
+                json={
+                    "model": "test-model",
+                    "input": "Hello",
+                },
+            ) as response:
+                response_body = await response.json()
+
+                assert response.status == 200
+                assert response_body == response_data
+                assert "Content-Encoding" not in response.headers
+
+    finally:
+        await proxy_server.close()
+        await backend_server.close()
+
+    calls = session_log.close()
+
+    assert len(calls) == 1
+    assert calls[0]["response"] == {
+        "status": 200,
+        "streamed": False,
+        "body": response_data,
+    }
